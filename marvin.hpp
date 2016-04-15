@@ -2145,7 +2145,7 @@ __global__ void Kernel_calcG(size_t CUDA_NUM_LOOPS, size_t N, StorageT* left, St
     }
 }
 
-__global__ void Kernel_NAGL1_me(size_t CUDA_NUM_LOOPS, size_t N, int nNets, ComputeT decay, ComputeT momentum, ComputeT delta, ComputeT lr, const StorageT* weights, StorageT* gradients, ComputeT* my_g){
+__global__ void Kernel_NAGL1_me(size_t CUDA_NUM_LOOPS, size_t N, int nNets, ComputeT decay, ComputeT momentum, ComputeT delta, ComputeT lr, const StorageT* weights, StorageT* gradients, StorageT* gradients1, ComputeT* my_g){
     const size_t idxBase = size_t(CUDA_NUM_LOOPS) * (size_t(CUDA_NUM_THREADS) * size_t(blockIdx.x) + size_t(threadIdx.x));
     if (idxBase >= N) return;
     for (size_t idx = idxBase; idx < min(N,idxBase+CUDA_NUM_LOOPS); ++idx ){
@@ -2162,10 +2162,6 @@ __global__ void Kernel_NAGL1_me(size_t CUDA_NUM_LOOPS, size_t N, int nNets, Comp
         else            g = 0;
 
 	g += my_g[idx];
-        /*
-	for (int k=1; k<nNets+1; ++k) // summation! 
-             g += GPUStorage2ComputeT(gradients[N*k+idx]);
-	*/
 
         /* NAG : from Marvin Docs                               */
         /* temp    <- history                                   */
@@ -2175,6 +2171,10 @@ __global__ void Kernel_NAGL1_me(size_t CUDA_NUM_LOOPS, size_t N, int nNets, Comp
         h = momentum * h + lr * g;
         gradients[h_idx] = GPUCompute2StorageT(h);
         gradients[idx] = GPUCompute2StorageT((1+momentum) * h - momentum * t);
+	
+	// TODO: Save information on other GPU (faster as a memcopy?)
+	gradients1[h_idx] = GPUCompute2Sotrage(h);
+	gradients1[idx] = GPUCompute2StorageT((1+momentum) * h - momentum * t);
     }
 }
 
@@ -2245,14 +2245,14 @@ void my_update_solver(SolverAlgorithm solver, Regularizer regularizer, int iter,
     ComputeT* g;
     cudaMalloc(&g, sizeof(ComputeT)*N);
 
-    int diff0_offset = N;
-    int diff1_offset = 2*N;
-    Kernel_calcG<<<CUDA_GET_BLOCKS(N), CUDA_NUM_THREADS>>>(CUDA_GET_LOOPS(N), N, gradients0 + diff0_offset, gradients0 + diff1_offset, g);
+    //int diff0_offset = N;
+    //int diff1_offset = 2*N;
+    Kernel_calcG<<<CUDA_GET_BLOCKS(N), CUDA_NUM_THREADS>>>(CUDA_GET_LOOPS(N), N, gradients0 + N, gradients1 + N, g);
 
     sync2(__LINE__, "After calcG");
 
     // Then perform update.
-    Kernel_NAGL1_me<<<CUDA_GET_BLOCKS(N), CUDA_NUM_THREADS>>>(CUDA_GET_LOOPS(N),N,nNets,decay,momentum,delta,lr,weights,gradients0, g);
+    Kernel_NAGL1_me<<<CUDA_GET_BLOCKS(N), CUDA_NUM_THREADS>>>(CUDA_GET_LOOPS(N),N,nNets,decay,momentum,delta,lr,weights,gradients0, gradients1, g);
     cudaFree(g);
 }
 
@@ -7341,7 +7341,10 @@ public:
                 }
             }
 
-	    print("Testing Alt. Mem. Alloc");
+	    checkCUDA(__LINE__, cudaSetDevice(GPU[0]));
+	    checkCUDA(__LINE__, cudaDeviceEnablePeerAccess(GPU[1], 0));
+
+	    /*print("Testing Alt. Mem. Alloc");
 
 	    // Allocate buffers
     	    const size_t buf_size = 1024 * 1024 * 16 * sizeof(float);
@@ -7354,13 +7357,8 @@ public:
             float *g1;
 	    checkCUDA(__LINE__, cudaMalloc(&g1, buf_size));
 
-            
-	    float *h0;
-            checkCUDA(__LINE__, cudaMallocHost(&h0, buf_size)); // Automatically portable with UVA	
-
-	    // Kernel launch configuration
-    	    const dim3 threads(512, 1);
-            const dim3 blocks((buf_size / sizeof(float)) / threads.x, 1);
+	    //float *h0;
+            //checkCUDA(__LINE__, cudaMallocHost(&h0, buf_size)); // Automatically portable with UVA	
 
     	    // Run kernel on GPU 1, reading input from the GPU 0 buffer, writing
     	    // output to the GPU 1 buffer
@@ -7379,7 +7377,8 @@ public:
             SimpleKernel<<<CUDA_GET_BLOCKS(buf_size), CUDA_NUM_THREADS>>>(g1, g0, buf_size);
 
             checkCUDA(__LINE__, cudaDeviceSynchronize());
-
+	    checkCUDA(__LINE__, cudaFree(g0));
+	    checkCUDA(__LINE__, cudaFree(g1));*/
         }
 
     };
@@ -7454,10 +7453,8 @@ public:
                 break;
         }
 
-	bool ready_for_alt_mem_alloc = false;
-
 	// EXPERIMENTAL
-	if (ready_for_alt_mem_alloc) {
+	if (hier_mode) {
 	    print("|- - - - - - RUNNING AN EXPERIMENT - - - - - -|");
 	    print("|     *Reserving memory on multiple gpus      |");
 	    print("|- - - - - - - - - - - - - - - - - - - - - - -|");
@@ -7594,8 +7591,7 @@ public:
     };
 
     ~Solver(){
-	bool is_ready_for_alt_mem_alloc = false;
-	if (is_ready_for_alt_mem_alloc) {
+	if (hier_mode) {
 	    for (int gpu = 0; gpu < nets.size(); gpu++) {
 		checkCUDA(__LINE__,cudaSetDevice(GPU_solver));
 		for (int l=0; l<nets[gpu]->layers.size(); ++l){
