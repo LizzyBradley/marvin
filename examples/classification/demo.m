@@ -1,5 +1,8 @@
 function demo(net_name, data_name, net_suffix)
 
+setenv('LD_LIBRARY_PATH', '/usr/lib/x86_64-linux-gnu/');
+setenv('LD_LIBRARY_PATH', '/usr/local/cudnn/v4/lib64/');
+
 if nargin < 3
     net_suffix = '';
 end
@@ -12,7 +15,7 @@ addpath(fullfile(marvin_root, 'tools', 'tensorIO_matlab'));
 model_path = fullfile('models', model_name, [model_full_name, '.json']);
 pretrained_path = fullfile('models', model_name, [model_full_name, '_half.marvin']);
 if ~exist(fullfile(marvin_root, pretrained_path), 'file')
-    error('Download pretraiend model %s first', pretrained_path);
+    error('Download pretrained model %s first', pretrained_path);
 end
 
 switch net_name
@@ -79,29 +82,28 @@ label_tensor.sizeof = 2;
 label_tensor.dim = 4;
 writeTensors(train_label_path, label_tensor);
 writeTensors(val_label_path, label_tensor);
-
-%% run marvin test
 template = './marvin test %s %s %s examples/classification/cls_prob_0';
 cmd = sprintf(template, model_path, pretrained_path, last_layer);   
-system(sprintf('cd %s; export LD_LIBRARY_PATH=LD_LIBRARY_PATH:/usr/local/cuda/lib64; %s', marvin_root, cmd));
+model_path
+system(sprintf('cd %s; export LD_LIBRARY_PATH=LD_LIBRARY_PATH:/usr/local/cuda/v4/lib64:/usr/local/cuda-7.5/targets/x86_64-linux/lib:/usr/local/cuda-unknown_21769/lib64:/usr/local/cudnn/v4/lib64; %s', marvin_root, cmd));
 
 %% show result
-result = readTensors('cls_prob_0');
-conf = result.value(:,:,:,2);
-conf = conf(:);
-[~, maxidx]=sort(conf,'descend');
+%result = readTensors('cls_prob_0');
+%conf = result.value(:,:,:,2);
+%conf = conf(:);
+%[~, maxidx]=sort(conf,'descend');
 
-fprintf('\n=========================\n\n')
-fprintf('Top 5 results \n')
-for ii = 1:5
-    fprintf('%d: class %d %s\n', ii, maxidx(ii), class_names{maxidx(ii)})
-end
+%fprintf('\n=========================\n\n')
+%fprintf('Top 5 results \n')
+%for ii = 1:5
+%    fprintf('%d: class %d %s\n', ii, maxidx(ii), class_names{maxidx(ii)})
+%end
 
 %% delete
-delete(train_data_path)
-delete(train_label_path)
-delete(val_data_path)
-delete(val_label_path)
-delete('cls_prob_0')
+%delete(train_data_path)
+%delete(train_label_path)
+%delete(val_data_path)
+%delete(val_label_path)
+%delete('cls_prob_0')
 
 end

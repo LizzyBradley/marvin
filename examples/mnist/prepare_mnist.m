@@ -1,5 +1,5 @@
 function prepare_mnist
-
+    setenv('LD_LIBRARY_PATH', '/usr/lib/x86_64-linux-gnu/');
     cd(fileparts(which(mfilename)));
     addpath ../../tools/tensorIO_matlab/
 

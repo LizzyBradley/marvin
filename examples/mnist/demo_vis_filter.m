@@ -2,7 +2,7 @@ cd(fileparts(which(mfilename)));
 addpath ../../tools/tensorIO_matlab/
 
 cd ../../
-system('LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64; ./marvin activate examples/mnist/lenet.json examples/mnist/lenet.marvin data conv1 [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19] examples/mnist/filters_ 100 20')
+system('LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cudnn/v4/lib64; ./marvin activate examples/mnist/lenet.json examples/mnist/lenet.marvin data conv1 [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19] examples/mnist/filters_ 100 20')
 cd examples/mnist
 
 clear;
