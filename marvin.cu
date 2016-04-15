@@ -24,11 +24,35 @@ int main(int argc, char **argv){
     cout<< "====================================================================================================================================="<<endl;
 
     if(0==strcmp(argv[1], "train")){
+	bool benchmark_mode = false;
+	bool hier_summ = false;
 
-        Solver solver(argv[2]);
+	/* Find the benchmarking flag, must be after "train". This behavior might need to change*/
+	for (int i = 2; i < argc; i++) {
+	     if (0==strcmp(argv[i], "-bench")) {
+                benchmark_mode = true;
+                
+		// Remove flag
+	        argc--;
+		for (int j = i; j < argc; j++)
+		    argv[j] = argv[j+1];
+		
+		argv[argc+1] = 0; 
+            } else if (0==strcmp(argv[i], "-hier")) {
+		hier_summ = true;
+
+		argc--;
+		for (int j = i; j < argc; j++)
+		    argv[j] = argv[j+1];
+		
+		argv[argc+1] = 0;
+	    }
+	}
+
+        Solver solver(argv[2], benchmark_mode, hier_summ);
         solver.Malloc(Training);
         solver.randInit();
-                
+        
         if (argc==3){       
             solver.train();
         }else if (argc==4 || argc==5){
