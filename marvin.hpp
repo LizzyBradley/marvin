@@ -2208,7 +2208,7 @@ __global__ void NAGL1_hier_uva(size_t CUDA_NUM_LOOPS, size_t N, int nNets, Compu
         /* diff <- gradient + weight_decay * sign(weight) */
         ComputeT w  = GPUStorage2ComputeT(weights[idx]);     // weight
         ComputeT u  = GPUStorage2ComputeT(gradients0[idx]);   // unused, see AdaGrad for use
-        size_t h_idx = N*(nNets+1)+idx;
+        size_t h_idx = N*(/*nNets*/1+1)+idx;
         ComputeT h  = GPUStorage2ComputeT(gradients0[h_idx]); // history
 
         ComputeT g;
@@ -2224,12 +2224,16 @@ __global__ void NAGL1_hier_uva(size_t CUDA_NUM_LOOPS, size_t N, int nNets, Compu
         /* update  <- (1+momentum)*history - momentum * temp    */
         ComputeT t  = h;
         h = momentum * h + lr * g;
-        gradients0[h_idx] = GPUCompute2StorageT(h);
-        gradients0[idx] = GPUCompute2StorageT((1+momentum) * h - momentum * t);
+
+	StorageT update = GPUCompute2StorageT((1+momentum) * h - momentum * t);
+	StorageT history = GPUCompute2StorageT(h);	
+
+        gradients0[h_idx] = history;
+        gradients0[idx]   = update;
 
         // TODO: Save information on other GPU (faster as a memcopy?)
-        gradients1[h_idx] = GPUCompute2StorageT(h);
-        gradients1[idx] = GPUCompute2StorageT((1+momentum) * h - momentum * t);
+        gradients1[h_idx] = history;
+        gradients1[idx]   = update;
     }
 }
 
@@ -2243,21 +2247,16 @@ void my_update_solver(SolverAlgorithm solver, Regularizer regularizer, int iter,
 	ComputeT* g;
 	cudaMalloc(&g, sizeof(ComputeT) * N);
 
-	//int offset_GPU0 = N * sizeof(StorageT);
-	//int offset_GPU1 = 2*N * sizeof(StorageT);
-	calcG<<<CUDA_GET_BLOCKS(N), CUDA_NUM_THREADS>>>(CUDA_GET_LOOPS(N), N, &gradients0[N], &gradients0[N], g);
-
+	calcG<<<CUDA_GET_BLOCKS(N), CUDA_NUM_THREADS>>>(CUDA_GET_LOOPS(N), N, &gradients0[N], &gradients0[2*N], g);
 	sync2(__LINE__, "summed g");
+
 	NAGL1_hier<<<CUDA_GET_BLOCKS(N), CUDA_NUM_THREADS>>>(CUDA_GET_LOOPS(N),N,nNets,decay,momentum,delta,lr,weights,gradients0,g);
 	cudaFree(g);
     } else { // -hier AND -uva
 	ComputeT* g;
         cudaMalloc(&g, sizeof(ComputeT) * N);
 
-        int offset_GPU0 = N * sizeof(StorageT);
-        int offset_GPU1 = N * sizeof(StorageT);        
-	calcG<<<CUDA_GET_BLOCKS(N), CUDA_NUM_THREADS>>>(CUDA_GET_LOOPS(N), N, gradients0 + offset_GPU0, gradients1 + offset_GPU1, g);
-
+	calcG<<<CUDA_GET_BLOCKS(N), CUDA_NUM_THREADS>>>(CUDA_GET_LOOPS(N), N, &gradients0[N], &gradients1[N], g);
     	sync2(__LINE__, "summed g");
 
     	// Then perform update.
