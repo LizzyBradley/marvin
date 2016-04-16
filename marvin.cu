@@ -5,6 +5,20 @@
 using namespace marvin;
 using namespace std;
 
+bool examine_flag(const char* flag, int &i, int &argc, char **argv) {
+    if (0==strcmp(argv[i], flag)) {
+	argc--;
+	for (int j = i; j < argc; j++)
+            argv[j] = argv[j+1];
+
+	argv[argc+1] = 0;
+	i--;
+
+	return true;
+    }
+    return false;
+}
+
 int main(int argc, char **argv){
 
     if (argc < 3 || argc >10){
@@ -24,32 +38,30 @@ int main(int argc, char **argv){
     cout<< "====================================================================================================================================="<<endl;
 
     if(0==strcmp(argv[1], "train")){
-	bool benchmark_mode = false;
-	bool hier_summ = false;
+	bool benchmark_mode = false;  // Turn on timing benchmarks
+	bool hier_mode      = false;  // Turn on hierarchical summation
+	bool verbose_mode   = false;  // Turn on verbose, debug printing
+	bool uva_mode       = false;  // Turn on alt. memory storage
 
-	/* Find the benchmarking flag, must be after "train". This behavior might need to change*/
+	// Identify command-line flags
 	for (int i = 2; i < argc; i++) {
-	     if (0==strcmp(argv[i], "-bench")) {
-                benchmark_mode = true;
-                
-		// Remove flag
-	        argc--;
-		for (int j = i; j < argc; j++)
-		    argv[j] = argv[j+1];
-		
-		argv[argc+1] = 0; 
-            } else if (0==strcmp(argv[i], "-hier")) {
-		hier_summ = true;
-
-		argc--;
-		for (int j = i; j < argc; j++)
-		    argv[j] = argv[j+1];
-		
-		argv[argc+1] = 0;
-	    }
+	    if (!benchmark_mode)
+		benchmark_mode = examine_flag("-bench", i, argc, argv);
+	    if (!hier_mode)
+		hier_mode = examine_flag("-hier", i, argc, argv);
+	    if (!verbose_mode)
+		verbose_mode = examine_flag("-v", i, argc, argv);
+	    if (!uva_mode)
+		uva_mode = examine_flag("-uva", i, argc, argv);
 	}
 
-        Solver solver(argv[2], benchmark_mode, hier_summ);
+	map<const char*, bool> params;
+  	params["benchmark_mode"] = benchmark_mode;
+	params["hier_mode"]      = hier_mode;
+	params["verbose_mode"]   = verbose_mode;
+	params["uva_mode"]       = uva_mode;
+
+        Solver solver(argv[2], params);
         solver.Malloc(Training);
         solver.randInit();
         

@@ -113,7 +113,7 @@ const ComputeT* zeroComputeT = &zeroval;
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 double total_elapsed_time = 0.0;
-
+bool verbose_mode = false;
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 // Debugging utility
@@ -2140,7 +2140,7 @@ __global__ void Kernel_calcG(size_t CUDA_NUM_LOOPS, size_t N, StorageT* left, St
     if (idxBase >= N) return;
     for (size_t idx = idxBase; idx < min(N,idxBase+CUDA_NUM_LOOPS); ++idx ){
     	//    r += fabsf( __half2float(x[i*incx]) );
-    	float sum = GPUStorage2ComputeT(left[idx]) + GPUStorage2ComputeT(right[idx]);
+    	float sum = fabsf(GPUStorage2ComputeT(left[idx]) + GPUStorage2ComputeT(right[idx]));
     	g[idx] = sum;
     }
 }
@@ -2161,6 +2161,9 @@ __global__ void Kernel_NAGL1_me(size_t CUDA_NUM_LOOPS, size_t N, int nNets, Comp
         else if (w<0)   g = -decay;
         else            g = 0;
 
+        //for (int k=1; k<nNets+1; ++k) // summation! 
+        //     g += GPUStorage2ComputeT(gradients[N*k+idx]);
+
 	g += my_g[idx];
 
         /* NAG : from Marvin Docs                               */
@@ -2173,7 +2176,7 @@ __global__ void Kernel_NAGL1_me(size_t CUDA_NUM_LOOPS, size_t N, int nNets, Comp
         gradients[idx] = GPUCompute2StorageT((1+momentum) * h - momentum * t);
 	
 	// TODO: Save information on other GPU (faster as a memcopy?)
-	gradients1[h_idx] = GPUCompute2Sotrage(h);
+	gradients1[h_idx] = GPUCompute2StorageT(h);
 	gradients1[idx] = GPUCompute2StorageT((1+momentum) * h - momentum * t);
     }
 }
@@ -2227,12 +2230,16 @@ void print2(std::string text) {
 }
 
 void sync2(const int ln, std::string location) {
-    print2("---------------------------");
-    print2("|    Preparing to Sync    |");
-    print2("| Loc: " + location + "  | ");
-    checkCUDA(ln, cudaDeviceSynchronize());
-    print2("|         Success         |");
-    print2("---------------------------");
+    if (verbose_mode) {
+        print2("---------------------------");
+        print2("|    Preparing to Sync    |");
+        print2("| Loc: " + location + "  | ");
+        checkCUDA(ln, cudaDeviceSynchronize());
+        print2("|         Success         |");
+        print2("---------------------------");
+    } else {
+	checkCUDA(ln, cudaDeviceSynchronize());
+    } 
 }
 
 void my_update_solver(SolverAlgorithm solver, Regularizer regularizer, int iter, size_t N, int nNets, ComputeT decay, ComputeT momentum, ComputeT momentum2, ComputeT delta, ComputeT rms_decay, ComputeT lr, const StorageT* weights, StorageT* gradients0, StorageT* gradients1, bool hier_mode){
@@ -2252,7 +2259,7 @@ void my_update_solver(SolverAlgorithm solver, Regularizer regularizer, int iter,
     sync2(__LINE__, "After calcG");
 
     // Then perform update.
-    Kernel_NAGL1_me<<<CUDA_GET_BLOCKS(N), CUDA_NUM_THREADS>>>(CUDA_GET_LOOPS(N),N,nNets,decay,momentum,delta,lr,weights,gradients0, gradients1, g);
+    Kernel_NAGL1_me<<<CUDA_GET_BLOCKS(N), CUDA_NUM_THREADS>>>(CUDA_GET_LOOPS(N),N,nNets,decay,momentum,delta,lr,weights,gradients0,gradients1,g);
     cudaFree(g);
 }
 
@@ -2287,7 +2294,7 @@ __global__ void Kernel_maxElement(size_t N, const StorageT *x, size_t* pMaxID, C
 }
 
 void GPU_maxElement(size_t N, const StorageT *x, size_t* cpuMaxID, ComputeT* cpuMaxValue){
-    size_t* gpuMaxID;    cudaMalloc(&gpuMaxID,    sizeof(size_t));
+    size_t* gpuMaxID;    cudaMalloc(&gpuMaxID,    sizeof(size_t));bool verbose_mode = false;
     ComputeT* gpuMaxValue; cudaMalloc(&gpuMaxValue, sizeof(ComputeT));
 
     Kernel_maxElement<<<1,1>>>(N, x, gpuMaxID, gpuMaxValue);
@@ -2761,12 +2768,16 @@ void print(std::string text) {
 }
 
 void sync(const int ln, std::string location) {
-    print("---------------------------");
-    print("|    Preparing to Sync    |");
-    print("| Loc: " + location + "  | ");
-    checkCUDA(ln, cudaDeviceSynchronize());
-    print("|         Success         |");
-    print("---------------------------");
+    if (verbose_mode) {
+        print("---------------------------");
+        print("|    Preparing to Sync    |");
+        print("| Loc: " + location + "  | ");
+        checkCUDA(ln, cudaDeviceSynchronize());
+        print("|         Success         |");
+        print("---------------------------");
+    } else {
+	checkCUDA(ln, cudaDeviceSynchronize());
+    }
 }
 
 /* For the 2-GPU experiment, sum the gradients */
@@ -2790,7 +2801,7 @@ __global__ void Kernel_summ(size_t CUDA_NUM_LOOPS, size_t N, StorageT* solver_gr
 __global__ void Convert(StorageT* to_convert, size_t N) {
     int i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i >= N) return;
-    printf("%6.4lf ", GPUStorage2ComputeT(to_convert[i]));
+    printf("%6.8lf ", GPUStorage2ComputeT(to_convert[i]));
 }
 
 /* Print numel of stored values */
@@ -7243,10 +7254,18 @@ public:
     int test_iter;          // how many forward passes the test should carry out
     int test_interval;      // Carry out testing every 500 training iterations
     bool debug_mode;
+
+    // Modes by Lizzy
     bool benchmark_mode;    // Perform benchmark timing
     bool hier_mode;    
+    bool verbose_mode;
+    bool uva_mode;
 
-    Solver(std::string filename=std::string(), bool do_benchmark=false, bool do_hier=false){
+    Solver(std::string filename=std::string(), std::map<const char*, bool> params=std::map<const char*, bool>()) {
+	bool do_benchmark = params["benchmark_mode"];
+	bool do_hier      = params["hier_mode"];
+	bool do_verbose   = params["verbose_mode"];
+	bool do_uva       = params["uva_mode"];
 
         // construct the network from the file in JSON
         JSON* train_obj = new JSON;
@@ -7273,12 +7292,16 @@ public:
         SetValue(train_obj, test_iter,      100)
         SetValue(train_obj, test_interval,  500)
         SetValue(train_obj, debug_mode,     false)
-        SetValue(train_obj, benchmark_mode, do_benchmark)
 	SetValue(train_obj, GPU,            veci(1,0))
         SetOrDie(train_obj, path            )
         SetValue(train_obj, GPU_solver,     -1)
 
+	SetValue(train_obj, benchmark_mode, do_benchmark)
 	SetValue(train_obj, hier_mode, do_hier)
+	SetValue(train_obj, verbose_mode, do_verbose)	
+	SetValue(train_obj, uva_mode, do_uva)
+
+	verbose_mode = do_verbose;
 
         if (GPU_solver==-1) GPU_solver=GPU[0];
 
@@ -7673,11 +7696,12 @@ public:
             if (layer0->train_me){ // that needs to be trained
                 if (layer0->weight_numel>0){ // Update the weights
 		    
-                    //print("Before the Update: ");
-		    //print_sample(layer0->weight_histGPU, 5);
-		    //sync(__LINE__, "Between print_samples");
-		    //print_sample(layer1->weight_histGPU, 5);
-		    
+                    print("\nBefore Update [ " + layer0->name + " ]");
+		    print_sample(layer0->weight_histGPU, 5);
+		    sync(__LINE__, "Between print_samples()");
+		    print_sample(layer1->weight_histGPU, 5);
+		    sync(__LINE__, "after print_samples()");
+
 		    std::string name = layer0->name;
 		    std::string loc  = name + " before update"; 
 		    sync(__LINE__, loc);
@@ -7687,22 +7711,17 @@ public:
 		    loc = name + " after update";
 		    sync(__LINE__, loc);
 
-		    //print("After the Update: ");
-		    /*print_sample(layer0->weight_histGPU, 5);
-                    print_sample(layer1->weight_histGPU, 5);*/
-		    print("");
+                    print("\nAfter Update [ " + layer0->name + " ]");
+		    print_sample(layer0->weight_histGPU, 5);
+		    sync(__LINE__, "Between print_samples()");
+                    print_sample(layer1->weight_histGPU, 5);
+		    sync(__LINE__, "after print_samples()");
+
 		}                
 		if (layer0->bias_numel>0){ // Update the bias
-		    //print("Before the Update: ");
-                    /*print_sample(layer0->weight_histGPU, 5);
-                    print_sample(layer1->weight_histGPU, 5);*/
-
                     my_update_solver(solver, regularizer, iter, nets[0]->layers[l]->bias_numel, nets.size(), weight_decay * nets[0]->layers[l]->bias_decay_mult, momentum, momentum2, delta, rms_decay, learning_rate * nets[0]->layers[l]->bias_lr_mult, nets[0]->layers[l]->bias_dataGPU, nets[0]->layers[l]->bias_histGPU, nets[1]->layers[l]->bias_histGPU, hier_mode);
 		    checkCUDA(__LINE__,cudaDeviceSynchronize());
 
-		    //print("After the Update: ");
-                    /*print_sample(layer0->weight_histGPU, 5);
-                    print_sample(layer1->weight_histGPU, 5);*/
 		}
                 for(int ll=0; ll<nets[0]->layers[l]->sub_layers.size(); ++ll){ // Same for sublayers
                     if (nets[0]->layers[l]->sub_layers[ll]->train_me){
