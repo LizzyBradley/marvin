@@ -2099,48 +2099,12 @@ __global__ void Kernel_update_RMSpropL2(size_t CUDA_NUM_LOOPS, size_t N, int nNe
     }
 }
 
-/*__global__ void Kernel_NAGL1_me(size_t CUDA_NUM_LOOPS, size_t N, int nNets, ComputeT decay, ComputeT momentum, ComputeT delta, ComputeT lr, const StorageT* weights, StorageT* gradients, StorageT* gradients2){
-    //printf("Hello from block %d, thread %d\n", blockIdx.x, threadIdx.x);
-    const size_t idxBase = size_t(CUDA_NUM_LOOPS) * (size_t(CUDA_NUM_THREADS) * size_t(blockIdx.x) + size_t(threadIdx.x));
-    if (idxBase >= N) return;
-    for (size_t idx = idxBase; idx < min(N,idxBase+CUDA_NUM_LOOPS); ++idx ){*/
-        /* L1 Regularizer : from Marvin Docs              */
-        /* diff <- gradient + weight_decay * sign(weight) */
-        /*ComputeT w  = GPUStorage2ComputeT(weights[idx]);     // weight
-        ComputeT u  = GPUStorage2ComputeT(gradients[idx]);   // unused, see AdaGrad for use
-        size_t h_idx = N*(nNets1 +1)+idx;
-        ComputeT h  = GPUStorage2ComputeT(gradients[h_idx]); // history
-        ComputeT g;
-        if (w>0)        g = decay;
-        else if (w<0)   g = -decay;
-        else            g = 0;
-        //for (int k=1; k<nNets+1; ++k) // summation! 
-        //     g += GPUStorage2ComputeT(gradients[N*k+idx]);
-        //g += GPUStorage2ComputeT(gradients2[N+idx]); // SUMMATION (!)*/
-
-        /* NAG : from Marvin Docs                               */
-        /* temp    <- history                                   */
-        /* history <- momentum * history + learning_rate * diff */
-        /* update  <- (1+momentum)*history - momentum * temp    */
-        /*ComputeT t  = h;
-        h = momentum * h + lr * g;*/
-        //gradients[h_idx] = GPUCompute2StorageT(h);
-
-	/* UPDATE */
-	/*StorageT update  = GPUCompute2StorageT((1+momentum) * h - momentum * t);
-        gradients[idx]   = update;
-        //gradients2[idx]  = update;
-    }
-}*/
-
-
-
-__global__ void Kernel_calcG(size_t CUDA_NUM_LOOPS, size_t N, StorageT* left, StorageT* right, ComputeT* g) {
+__global__ void calcG(size_t CUDA_NUM_LOOPS, size_t N, StorageT* left, StorageT* right, ComputeT* g) {
     const size_t idxBase = size_t(CUDA_NUM_LOOPS) * (size_t(CUDA_NUM_THREADS) * size_t(blockIdx.x) + size_t(threadIdx.x));
     if (idxBase >= N) return;
     for (size_t idx = idxBase; idx < min(N,idxBase+CUDA_NUM_LOOPS); ++idx ){
     	//    r += fabsf( __half2float(x[i*incx]) );
-    	float sum = fabsf(GPUStorage2ComputeT(left[idx]) + GPUStorage2ComputeT(right[idx]));
+    	ComputeT sum = GPUStorage2ComputeT(left[idx]) + GPUStorage2ComputeT(right[idx]);
     	g[idx] = sum;
     }
 }
@@ -2279,9 +2243,9 @@ void my_update_solver(SolverAlgorithm solver, Regularizer regularizer, int iter,
 	ComputeT* g;
 	cudaMalloc(&g, sizeof(ComputeT) * N);
 
-	int offset_GPU0 = N;
-	int offset_GPU1 = 2*N;
-	Kernel_calcG<<<CUDA_GET_BLOCKS(N), CUDA_NUM_THREADS>>>(CUDA_GET_LOOPS(N), N, gradients0 + offset_GPU0, gradients0 + offset_GPU1, g);
+	//int offset_GPU0 = N * sizeof(StorageT);
+	//int offset_GPU1 = 2*N * sizeof(StorageT);
+	calcG<<<CUDA_GET_BLOCKS(N), CUDA_NUM_THREADS>>>(CUDA_GET_LOOPS(N), N, &gradients0[N], &gradients0[N], g);
 
 	sync2(__LINE__, "summed g");
 	NAGL1_hier<<<CUDA_GET_BLOCKS(N), CUDA_NUM_THREADS>>>(CUDA_GET_LOOPS(N),N,nNets,decay,momentum,delta,lr,weights,gradients0,g);
@@ -2290,9 +2254,9 @@ void my_update_solver(SolverAlgorithm solver, Regularizer regularizer, int iter,
 	ComputeT* g;
         cudaMalloc(&g, sizeof(ComputeT) * N);
 
-        int offset_GPU0 = N;
-        int offset_GPU1 = N;        
-	Kernel_calcG<<<CUDA_GET_BLOCKS(N), CUDA_NUM_THREADS>>>(CUDA_GET_LOOPS(N), N, gradients0 + offset_GPU0, gradients1 + offset_GPU1, g);
+        int offset_GPU0 = N * sizeof(StorageT);
+        int offset_GPU1 = N * sizeof(StorageT);        
+	calcG<<<CUDA_GET_BLOCKS(N), CUDA_NUM_THREADS>>>(CUDA_GET_LOOPS(N), N, gradients0 + offset_GPU0, gradients1 + offset_GPU1, g);
 
     	sync2(__LINE__, "summed g");
 
