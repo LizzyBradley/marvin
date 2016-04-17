@@ -8,5 +8,4 @@ elif uname | grep -q Linux; then
   export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cudnn/v4rc/lib64
 fi
 
-./marvin train examples/mnist/test.json -bench
-
+matlab -r "setup('alexnet','imagenet');quit();"
