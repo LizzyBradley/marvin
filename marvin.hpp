@@ -2152,55 +2152,6 @@ void update_solver(SolverAlgorithm solver, Regularizer regularizer, int iter, si
     checkCUDA(__LINE__,cudaGetLastError());
 }
 
-/* Print utility */
-void print2(std::string text) {
-    std::cout<<text<<std::endl;
-}
-
-void sync2(const int ln, std::string location) {
-    if (verbose_mode) {
-        print2("---------------------------");
-        print2("|    Preparing to Sync    |");
-        print2("| Loc: " + location + "  | ");
-        checkCUDA(ln, cudaDeviceSynchronize());
-        print2("|         Success         |");
-        print2("---------------------------");
-    } else {
-	checkCUDA(ln, cudaDeviceSynchronize());
-    } 
-}
-
-
-__global__ void NAGL1_hier(size_t CUDA_NUM_LOOPS, size_t N, int nNets, ComputeT decay, ComputeT momentum, ComputeT delta, ComputeT lr, const StorageT* weights, StorageT* gradients, ComputeT* my_g){
-    const size_t idxBase = size_t(CUDA_NUM_LOOPS) * (size_t(CUDA_NUM_THREADS) * size_t(blockIdx.x) + size_t(threadIdx.x));
-    if (idxBase >= N) return;
-    for (size_t idx = idxBase; idx < min(N,idxBase+CUDA_NUM_LOOPS); ++idx ){
-        /* L1 Regularizer : from Marvin Docs              */
-        /* diff <- gradient + weight_decay * sign(weight) */
-        ComputeT w  = GPUStorage2ComputeT(weights[idx]);     // weight
-        ComputeT u  = GPUStorage2ComputeT(gradients[idx]);   // unused, see AdaGrad for use
-        size_t h_idx = N*(nNets+1)+idx;
-        ComputeT h  = GPUStorage2ComputeT(gradients[h_idx]); // history
-
-        ComputeT g;
-        if (w>0)        g = decay;
-        else if (w<0)   g = -decay;
-        else            g = 0;
-
-
-        g += my_g[idx];
-
-        /* NAG : from Marvin Docs                               */
-        /* temp    <- history                                   */
-        /* history <- momentum * history + learning_rate * diff */
-        /* update  <- (1+momentum)*history - momentum * temp    */
-        ComputeT t  = h;
-        h = momentum * h + lr * g;
-        gradients[h_idx] = GPUCompute2StorageT(h);
-        gradients[idx] = GPUCompute2StorageT((1+momentum) * h - momentum * t);
-    }
-}
-
 __global__ void NAGL1(size_t CUDA_NUM_LOOPS, size_t N, int nNets, ComputeT decay, ComputeT momentum, ComputeT delta, ComputeT lr, const StorageT* weights, StorageT* gradients0, StorageT* gradients1 = NULL, ComputeT* my_g = NULL){
     const size_t idxBase = size_t(CUDA_NUM_LOOPS) * (size_t(CUDA_NUM_THREADS) * size_t(blockIdx.x) + size_t(threadIdx.x));
     if (idxBase >= N) return;
@@ -2256,28 +2207,22 @@ __global__ void NAGL1(size_t CUDA_NUM_LOOPS, size_t N, int nNets, ComputeT decay
 }
 
 void my_update_solver(SolverAlgorithm solver, Regularizer regularizer, int iter, size_t N, int nNets, ComputeT decay, ComputeT momentum, ComputeT momentum2, ComputeT delta, ComputeT rms_decay, ComputeT lr, const StorageT* weights, StorageT* gradients0, StorageT* gradients1, bool hier_mode, bool uva_mode){
-    if (!hier_mode && !uva_mode) { // NOT -hier and NOT -uva
+    if (!hier_mode && !uva_mode) {
 	NAGL1<<<CUDA_GET_BLOCKS(N), CUDA_NUM_THREADS>>>(CUDA_GET_LOOPS(N),N,nNets,decay,momentum,delta,lr,weights,gradients0,NULL,NULL);
-        //update_solver(solver,regularizer,iter,N,nNets,decay,momentum,momentum2,delta,rms_decay,lr,weights,gradients0);
-    } else if (!hier_mode) { // NOT -hier and -uva
+    } else if (!hier_mode && uva_mode) {
 	NAGL1<<<CUDA_GET_BLOCKS(N), CUDA_NUM_THREADS>>>(CUDA_GET_LOOPS(N),N,nNets,decay,momentum,delta,lr,weights,gradients0,gradients1,NULL);
-    } else if (!uva_mode) { // -hier and NOT -uva
+    } else if (hier_mode && !uva_mode) {
 	ComputeT* g;
 	cudaMalloc(&g, sizeof(ComputeT) * N);
 
 	calcG<<<CUDA_GET_BLOCKS(N), CUDA_NUM_THREADS>>>(CUDA_GET_LOOPS(N), N, &gradients0[N], &gradients0[2*N], g);
-	sync2(__LINE__, "summed g");
-
 	NAGL1<<<CUDA_GET_BLOCKS(N), CUDA_NUM_THREADS>>>(CUDA_GET_LOOPS(N),N,nNets,decay,momentum,delta,lr,weights,gradients0,NULL,g);
 	cudaFree(g);
-    } else { // -hier AND -uva
+    } else { 
 	ComputeT* g;
         cudaMalloc(&g, sizeof(ComputeT) * N);
 
 	calcG<<<CUDA_GET_BLOCKS(N), CUDA_NUM_THREADS>>>(CUDA_GET_LOOPS(N), N, &gradients0[N], &gradients1[N], g);
-    	sync2(__LINE__, "summed g");
-
-    	// Then perform update.
     	NAGL1<<<CUDA_GET_BLOCKS(N), CUDA_NUM_THREADS>>>(CUDA_GET_LOOPS(N),N,nNets,decay,momentum,delta,lr,weights,gradients0,gradients1,g);
     	cudaFree(g);
     }
@@ -7679,7 +7624,7 @@ public:
             if (layer0->train_me){ // that needs to be trained
                 if (layer0->weight_numel>0){ // Update the weights
 		    
-                    print("\nBefore Update [ " + layer0->name + " ]");
+                    /*print("\nBefore Update [ " + layer0->name + " ]");
 		    print_sample(layer0->weight_histGPU, 5);
 		    sync(__LINE__, "Between print_samples()");
 		    print_sample(layer1->weight_histGPU, 5);
@@ -7687,18 +7632,18 @@ public:
 
 		    std::string name = layer0->name;
 		    std::string loc  = name + " before update"; 
-		    sync(__LINE__, loc);
+		    sync(__LINE__, loc);*/
 
 		    my_update_solver(solver, regularizer, iter, layer0->weight_numel, nets.size(), weight_decay * layer0->weight_decay_mult, momentum, momentum2, delta, rms_decay, learning_rate * layer0->weight_lr_mult, layer0->weight_dataGPU, layer0->weight_histGPU, layer1->weight_histGPU, hier_mode, uva_mode);
 		    
-		    loc = name + " after update";
+		    /*loc = name + " after update";
 		    sync(__LINE__, loc);
 
                     print("\nAfter Update [ " + layer0->name + " ]");
 		    print_sample(layer0->weight_histGPU, 5);
 		    sync(__LINE__, "Between print_samples()");
                     print_sample(layer1->weight_histGPU, 5);
-		    sync(__LINE__, "after print_samples()");
+		    sync(__LINE__, "after print_samples()");*/
 
 		}                
 		if (layer0->bias_numel>0){ // Update the bias
